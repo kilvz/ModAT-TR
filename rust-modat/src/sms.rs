@@ -39,6 +39,23 @@ fn decode_hex(hex_str: &str) -> Vec<u8> {
         .collect()
 }
 
+fn pdu_mti(pdu_hex: &str) -> Option<u8> {
+    let pdu_bytes = decode_hex(pdu_hex);
+    if pdu_bytes.is_empty() {
+        return None;
+    }
+
+    let mut offset = 0;
+    if pdu_bytes[0] > 0 && pdu_bytes[0] < 20 && 1 + pdu_bytes[0] as usize <= pdu_bytes.len() {
+        offset += 1 + pdu_bytes[0] as usize;
+    }
+    pdu_bytes.get(offset).map(|pdu_type| pdu_type & 0x03)
+}
+
+fn is_status_report_pdu(pdu_hex: &str) -> bool {
+    pdu_mti(pdu_hex) == Some(0x02)
+}
+
 fn decode_cms_error(response: &str) -> Option<String> {
     let code = RE_CMS_ERROR
         .captures(response)?
@@ -525,30 +542,26 @@ impl crate::ModAtApp {
         );
 
         {
-            let mut messages = Vec::new();
             for cap in RE_CMGL.captures_iter(&response) {
                 let index: usize = cap[1].parse().unwrap_or(0);
                 let status = cap[2].to_string();
-                let pdu = cap[4].to_string();
-
-                let (phone, timestamp, _, _dcs) = self.decode_sms_simple(&pdu);
-                let msg = InboxMessage {
-                    index,
-                    status: status.clone(),
-                    pdu: pdu.clone(),
-                    phone: phone.clone(),
-                    timestamp: timestamp.clone(),
-                    unread: status == "1",
-                };
-                messages.push(msg);
-                self.log(&format!("Loaded message from {}", phone), "system");
+                let pdu = cap[3].to_string();
+                self.handle_direct_sms_with_status(&pdu, index, status.clone(), status == "0");
             }
-            self.inbox_messages = messages;
             self.save_inbox_file();
             self.log(
                 &format!("Loaded {} messages from modem", self.inbox_messages.len()),
                 "system",
             );
+        }
+    }
+
+    pub(crate) fn poll_unread_sms(&mut self) {
+        if self.expecting_cmgl_pdu || self.expecting_cmgr_pdu || self.waiting_cpms_for_sms {
+            return;
+        }
+        if let Some(ref tx) = self.serial_tx {
+            let _ = tx.send("AT+CMGL=0\r\n".to_string());
         }
     }
 
@@ -646,10 +659,33 @@ impl crate::ModAtApp {
     }
 
     pub(crate) fn clear_modem_delivery(&mut self) {
-        self.log(
-            "Clearing delivery reports from modem is disabled because the modem command can delete inbox SMS. Use Clear Reports to clear the local list.",
-            "error",
-        );
+        let response = self.send_at("AT+CMGL=4", 10);
+        let indexes: Vec<usize> = RE_CMGL
+            .captures_iter(&response)
+            .filter_map(|cap| {
+                let index = cap[1].parse::<usize>().ok()?;
+                let pdu = cap.get(3)?.as_str();
+                is_status_report_pdu(pdu).then_some(index)
+            })
+            .collect();
+
+        if indexes.is_empty() {
+            self.log("No modem delivery reports found to delete", "system");
+            return;
+        }
+
+        let mut deleted = 0;
+        for index in indexes {
+            let resp = self.send_at(&format!("AT+CMGD={}", index), 5);
+            if resp.contains("OK") {
+                deleted += 1;
+            } else {
+                self.log(&format!("Failed to delete delivery report at index {}: {}", index, resp), "error");
+            }
+        }
+
+        self.clear_delivery_reports();
+        self.log(&format!("Deleted {} modem delivery report(s)", deleted), "system");
     }
 
     pub(crate) fn parse_delivery_report(&mut self, pdu_hex: &str) {
@@ -837,6 +873,14 @@ impl crate::ModAtApp {
     }
 
     pub(crate) fn handle_direct_sms(&mut self, pdu_hex: &str) {
+        self.handle_direct_sms_with_index(pdu_hex, 0);
+    }
+
+    pub(crate) fn handle_direct_sms_with_index(&mut self, pdu_hex: &str, index: usize) {
+        self.handle_direct_sms_with_status(pdu_hex, index, "REC UNREAD".to_string(), true);
+    }
+
+    pub(crate) fn handle_direct_sms_with_status(&mut self, pdu_hex: &str, index: usize, status: String, unread: bool) {
         self.log("Handling PDU for inbox...", "system");
         let pdu_bytes = decode_hex(pdu_hex);
         if pdu_bytes.is_empty() {
@@ -867,15 +911,19 @@ impl crate::ModAtApp {
             self.log("PDU is a Status Report", "system");
             self.parse_delivery_report(pdu_hex);
         } else {
+            if self.inbox_messages.iter().any(|msg| msg.pdu == pdu_hex) {
+                self.log("Duplicate SMS PDU ignored", "system");
+                return;
+            }
             let (phone, timestamp, message, _dcs) = self.decode_sms_simple(pdu_hex);
             self.log(&format!("Decoded SMS from {}: {}", phone, message), "sms");
             self.inbox_messages.push(InboxMessage {
-                index: 0,
-                status: "REC UNREAD".to_string(),
+                index,
+                status,
                 pdu: pdu_hex.to_string(),
                 phone: phone.clone(),
                 timestamp,
-                unread: true,
+                unread,
             });
             self.save_inbox_file();
             self.log(
@@ -903,20 +951,41 @@ impl crate::ModAtApp {
 
     pub(crate) fn handle_cdsi(&mut self, line: &str) {
         if let Some(cap) = RE_CDSI.captures(line) {
+            let storage = cap[1].to_string();
             let index = cap[2].parse::<usize>().unwrap_or(0);
             if let Some(ref tx) = self.serial_tx {
+                self.pending_cmgr_index = Some(index);
+                let _ = tx.send(format!("AT+CPMS=\"{}\",\"{}\",\"{}\"\r\n", storage, storage, storage));
                 let _ = tx.send(format!("AT+CMGR={}\r\n", index));
-                self.log(&format!("Reading stored delivery report at index {}...", index), "system");
+                self.log(&format!("Reading stored delivery report from {} at index {}...", storage, index), "system");
             }
+        }
+    }
+
+    pub(crate) fn read_next_cmgr_from_queue(&mut self) {
+        if self.expecting_cmgr_pdu || self.waiting_cpms_for_sms {
+            return;
+        }
+        if let (Some(index), Some(tx)) = (self.cmgr_read_queue.pop_front(), self.serial_tx.clone()) {
+            self.pending_cmgr_index = Some(index);
+            self.expecting_cmgr_pdu = true;
+            let _ = tx.send(format!("AT+CMGR={}\r\n", index));
+            self.log(&format!("Reading queued SMS index {}...", index), "system");
         }
     }
 
     pub(crate) fn handle_cmti(&mut self, line: &str) {
         if let Some(cap) = RE_CMTI.captures(line) {
+            let storage = cap[1].to_string();
             let index = cap[2].parse::<usize>().unwrap_or(0);
             if let Some(ref tx) = self.serial_tx {
-                let _ = tx.send(format!("AT+CMGR={}\r\n", index));
-                self.log(&format!("Reading new message at index {}...", index), "system");
+                self.cmgr_read_queue.clear();
+                for i in index..=index.saturating_add(4) {
+                    self.cmgr_read_queue.push_back(i);
+                }
+                self.waiting_cpms_for_sms = true;
+                let _ = tx.send(format!("AT+CPMS=\"{}\",\"{}\",\"{}\"\r\n", storage, storage, storage));
+                self.log(&format!("Queueing SMS read from {} starting at index {}...", storage, index), "system");
             }
         }
     }

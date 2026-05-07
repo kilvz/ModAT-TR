@@ -173,6 +173,9 @@ impl crate::ModAtApp {
                     if ui.button("Clear Log").clicked() {
                         self.clear_log();
                     }
+                    if ui.checkbox(&mut self.hide_status_logs, "Hide status").changed() {
+                        self.log_cache_dirty = true;
+                    }
                 });
                 let log_height = ui.available_height().max(220.0);
                 if self.log_paused {

@@ -228,16 +228,21 @@ impl crate::ModAtApp {
             let chars: Vec<char> = trimmed.chars().collect();
             let mut i = 0;
             while i < chars.len() {
+                let at_start = i == 0;
+                let after_ws = i > 0 && chars[i - 1].is_whitespace();
                 if chars[i].is_ascii_digit()
+                    && (at_start || after_ws)
                     && i + 1 < chars.len()
                     && (chars[i+1] == '.' || chars[i+1] == ')' || chars[i+1] == '-' || chars[i+1] == ' ')
                 {
                     let start = i;
-                    i += 1; // skip digit separator
-                    while i < chars.len() && !(chars[i].is_ascii_digit()
-                        && i + 1 < chars.len()
-                        && (chars[i+1] == '.' || chars[i+1] == ')' || chars[i+1] == '-'))
-                    {
+                    i += 1;
+                    while i < chars.len() && !(
+                        i + 1 < chars.len()
+                        && chars[i].is_ascii_digit()
+                        && (chars[i+1] == '.' || chars[i+1] == ')' || chars[i+1] == '-')
+                        && (i == 0 || chars[i - 1].is_whitespace())
+                    ) {
                         i += 1;
                     }
                     let text = trimmed[start..i].trim().to_string();

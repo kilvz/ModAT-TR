@@ -64,6 +64,33 @@ impl crate::ModAtApp {
         let mode = self.log_mode.clone();
         let mut filtered: Vec<LogEntry> = Vec::new();
         for e in self.raw_log_entries.iter().chain(self.important_log_entries.iter()) {
+            if self.hide_status_logs
+                && (e.message.starts_with("Network:")
+                    || e.message.starts_with("Signal [")
+                    || e.message.starts_with("Frequency info updated")
+                    || e.message == "OK"
+                    || e.message.starts_with("+CSQ:")
+                    || e.message.starts_with("+COPS:")
+                    || e.message.starts_with("+CREG:")
+                    || e.message.starts_with("+CGREG:")
+                    || e.message.starts_with("^SYSINFOEX:")
+                    || e.message.starts_with("^RSSI:")
+                    || e.message.starts_with("^HCSQ:")
+                    || e.message.starts_with("^HFREQINFO:")
+                    || e.message.starts_with("^DSFLOWRPT:")
+                    || e.message.contains("\\r\\nOK\\r\\n")
+                    || e.message.contains("\\r\\n+CSQ:")
+                    || e.message.contains("\\r\\n+COPS:")
+                    || e.message.contains("\\r\\n+CREG:")
+                    || e.message.contains("\\r\\n+CGREG:")
+                    || e.message.contains("\\r\\n^SYSINFOEX:")
+                    || e.message.contains("\\r\\n^RSSI:")
+                    || e.message.contains("\\r\\n^HCSQ:")
+                    || e.message.contains("\\r\\n^HFREQINFO:")
+                    || e.message.contains("\\r\\n^DSFLOWRPT:"))
+            {
+                continue;
+            }
             let keep = match mode.as_str() {
                 "at" => e.category == "at",
                 "raw" => e.category == "raw",
@@ -105,7 +132,7 @@ impl crate::ModAtApp {
                     self.log(&format!("Failed to save settings: {}", e), "error");
                 } else {
                     self.log("Settings saved successfully", "system");
-                    self.warning_message = Some("Settings saved successfully.".to_string());
+                    self.settings_saved = Some(2.0);
                 }
             }
             Err(e) => self.log(&format!("Failed to save settings: {}", e), "error"),
@@ -229,6 +256,46 @@ impl crate::ModAtApp {
         }
     }
 
+    pub(crate) fn load_ussd_bookmarks(&mut self) {
+        if !self.ussd_bookmarks_file.exists() {
+            self.ussd_bookmarks = default_ussd_bookmarks();
+            self.save_ussd_bookmarks_file();
+            self.log("Created ussd_bookmarks.json with default bookmarks", "system");
+            return;
+        }
+        match std::fs::read_to_string(&self.ussd_bookmarks_file) {
+            Ok(content) => match serde_json::from_str::<Vec<crate::UssdBookmarkGroup>>(&content) {
+                Ok(data) => {
+                    self.ussd_bookmarks = data;
+                    self.log(
+                        &format!("Loaded {} bookmark groups", self.ussd_bookmarks.len()),
+                        "system",
+                    );
+                }
+                Err(e) => {
+                    self.ussd_bookmarks = default_ussd_bookmarks();
+                    self.log(&format!("Failed to parse ussd_bookmarks.json: {}", e), "error");
+                }
+            },
+            Err(e) => self.log(&format!("Failed to load ussd_bookmarks.json: {}", e), "error"),
+        }
+    }
+
+    pub(crate) fn save_ussd_bookmarks_file(&mut self) {
+        match serde_json::to_string_pretty(&self.ussd_bookmarks) {
+            Ok(content) => {
+                if let Err(e) = atomic_write(&self.ussd_bookmarks_file, &content) {
+                    self.log(&format!("Failed to save ussd_bookmarks.json: {}", e), "error");
+                }
+            }
+            Err(e) => self.log(&format!("Failed to serialize ussd_bookmarks.json: {}", e), "error"),
+        }
+    }
+
+    pub(crate) fn reload_ussd_bookmarks(&mut self) {
+        self.load_ussd_bookmarks();
+    }
+
     pub(crate) fn add_current_phone_as_contact(&mut self, name: String) {
         let phone = self
             .phone_number
@@ -296,4 +363,52 @@ impl crate::ModAtApp {
         }
         normalized.to_string()
     }
+}
+
+fn default_ussd_bookmarks() -> Vec<crate::UssdBookmarkGroup> {
+    vec![
+        crate::UssdBookmarkGroup {
+            operator: "Telkomsel".to_string(),
+            bookmarks: vec![
+                crate::UssdBookmarkEntry { name: "Cek Pulsa".to_string(), code: "*888#".to_string() },
+                crate::UssdBookmarkEntry { name: "Menu Utama".to_string(), code: "*123#".to_string() },
+                crate::UssdBookmarkEntry { name: "Paket Internet".to_string(), code: "*363#".to_string() },
+                crate::UssdBookmarkEntry { name: "Transfer Pulsa".to_string(), code: "*858#".to_string() },
+                crate::UssdBookmarkEntry { name: "Cek Kuota".to_string(), code: "*889#".to_string() },
+            ],
+        },
+        crate::UssdBookmarkGroup {
+            operator: "Indosat (IM3)".to_string(),
+            bookmarks: vec![
+                crate::UssdBookmarkEntry { name: "Menu myIM3".to_string(), code: "*123#".to_string() },
+                crate::UssdBookmarkEntry { name: "Cek Pulsa".to_string(), code: "*111#".to_string() },
+                crate::UssdBookmarkEntry { name: "Beli Paket".to_string(), code: "*123*1#".to_string() },
+                crate::UssdBookmarkEntry { name: "Cek Kuota".to_string(), code: "*123*3#".to_string() },
+            ],
+        },
+        crate::UssdBookmarkGroup {
+            operator: "XL Axiata".to_string(),
+            bookmarks: vec![
+                crate::UssdBookmarkEntry { name: "Menu / Cek Pulsa".to_string(), code: "*123#".to_string() },
+                crate::UssdBookmarkEntry { name: "Beli Paket".to_string(), code: "*123*1#".to_string() },
+                crate::UssdBookmarkEntry { name: "Cek Kuota".to_string(), code: "*123*3#".to_string() },
+            ],
+        },
+        crate::UssdBookmarkGroup {
+            operator: "Tri (3)".to_string(),
+            bookmarks: vec![
+                crate::UssdBookmarkEntry { name: "Menu".to_string(), code: "*111#".to_string() },
+                crate::UssdBookmarkEntry { name: "Cek Kuota".to_string(), code: "*111*1#".to_string() },
+                crate::UssdBookmarkEntry { name: "Cek Pulsa".to_string(), code: "*111*2#".to_string() },
+            ],
+        },
+        crate::UssdBookmarkGroup {
+            operator: "Smartfren".to_string(),
+            bookmarks: vec![
+                crate::UssdBookmarkEntry { name: "Menu".to_string(), code: "*123#".to_string() },
+                crate::UssdBookmarkEntry { name: "Cek Kuota".to_string(), code: "*995#".to_string() },
+                crate::UssdBookmarkEntry { name: "Cek Pulsa".to_string(), code: "*999#".to_string() },
+            ],
+        },
+    ]
 }

@@ -490,9 +490,7 @@ impl crate::ModAtApp {
         let tx = self.serial_tx.clone();
         thread::spawn(move || {
             if let Some(tx) = tx {
-                // We don't wait for response here to keep it non-blocking,
-                // just fire the best candidates. The modem will respond with OK/ERROR.
-                let _ = tx.send("AT+CNMI=2,2,0,0,0\r\n".to_string());
+                let _ = tx.send("AT+CNMI=2,0,0,2,1\r\n".to_string());
                 thread::sleep(Duration::from_millis(200));
                 let _ = tx.send("AT+CNMI?\r\n".to_string());
             }
@@ -1378,6 +1376,8 @@ impl crate::ModAtApp {
 
     // ─── Modem init ───
     fn init_modem(&mut self) {
+        self.send_at("AT^CURC=0", 3);
+        self.send_at("AT+CPMS=\"ME\",\"ME\",\"ME\"", 3);
         self.send_at("AT+CREG=2", 3);
         self.send_at("AT+CGREG=2", 3);
         self.send_at("AT^HCSQ=1", 3);
@@ -1457,6 +1457,14 @@ impl crate::ModAtApp {
         if line.contains("+CDS:") {
             self.log("Delivery report received", "sms");
             self.handle_cds_response(line);
+        } else if self.waiting_cpms_for_sms && line.contains("+CPMS:") {
+            self.waiting_cpms_for_sms = false;
+            self.read_next_cmgr_from_queue();
+        } else if self.expecting_cmgr_pdu && (line.contains("+CMS ERROR") || line == "ERROR") {
+            self.log("Queued SMS index could not be read", "error");
+            self.expecting_cmgr_pdu = false;
+            self.pending_cmgr_index = None;
+            self.read_next_cmgr_from_queue();
         } else if line.contains("+CDSI:") {
             self.log("Delivery notification stored by modem", "sms");
             self.handle_cdsi(line);
@@ -1466,6 +1474,11 @@ impl crate::ModAtApp {
         } else if line.contains("+CMT:") {
             self.log("Incoming SMS (direct PDU)", "sms");
             self.expecting_cmt_pdu = true;
+        } else if let Some(cap) = RE_CMGL_HEADER.captures(line) {
+            self.log("CMGL message header detected", "system");
+            self.expecting_cmgl_pdu = true;
+            self.pending_cmgl_index = cap[1].parse::<usize>().ok();
+            self.pending_cmgl_status = cap[2].to_string();
         } else if line.contains("+CMGR:") {
              self.log("CMGR header detected", "system");
              self.expecting_cmgr_pdu = true;
@@ -1511,7 +1524,15 @@ impl crate::ModAtApp {
             } else if self.expecting_cmgr_pdu {
                 self.log("Identified CMGR PDU", "system");
                 self.expecting_cmgr_pdu = false;
-                self.handle_direct_sms(line);
+                let index = self.pending_cmgr_index.take().unwrap_or(0);
+                self.handle_direct_sms_with_index(line, index);
+                self.read_next_cmgr_from_queue();
+            } else if self.expecting_cmgl_pdu {
+                self.log("Identified CMGL PDU", "system");
+                self.expecting_cmgl_pdu = false;
+                let index = self.pending_cmgl_index.take().unwrap_or(0);
+                let status = std::mem::take(&mut self.pending_cmgl_status);
+                self.handle_direct_sms_with_status(line, index, status.clone(), status == "0");
             } else {
                 self.log("Received unsolicited hex line (no pending SMS read)", "raw");
             }

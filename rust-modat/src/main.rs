@@ -149,6 +149,18 @@ struct AppSettingsFile {
     network: NetworkConfig,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct UssdBookmarkEntry {
+    pub(crate) name: String,
+    pub(crate) code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct UssdBookmarkGroup {
+    pub(crate) operator: String,
+    pub(crate) bookmarks: Vec<UssdBookmarkEntry>,
+}
+
 impl Default for AppSettingsFile {
     fn default() -> Self {
         Self {
@@ -165,7 +177,7 @@ impl Default for AppSettingsFile {
                 sms_class: "0 (Flash)".to_string(),
                 dcs: "0x50 (Class 0 - 7bit) [OK]".to_string(),
                 delivery_report: "true".to_string(),
-                log_mode: "readable".to_string(),
+                log_mode: "important".to_string(),
             },
             network: NetworkConfig {
                 modem_ip: "192.168.8.1".to_string(),
@@ -264,6 +276,13 @@ struct ModAtApp {
     expecting_cds_pdu: bool,
     expecting_cmt_pdu: bool,
     expecting_cmgr_pdu: bool,
+    expecting_cmgl_pdu: bool,
+    pending_cmgr_index: Option<usize>,
+    pending_cmgl_index: Option<usize>,
+    pending_cmgl_status: String,
+    cmgr_read_queue: VecDeque<usize>,
+    waiting_cpms_for_sms: bool,
+    last_inbox_poll: Instant,
     connected_port: Option<String>,
 
     // Thread communication
@@ -284,6 +303,7 @@ struct ModAtApp {
     dcs_options: Vec<String>,
     delivery_report: bool,
     log_mode: String,
+    hide_status_logs: bool,
     char_count: String,
 
     // UI state - Info
@@ -352,6 +372,8 @@ struct ModAtApp {
     ussd_plain_text: bool,
     ussd_console: String,
     ussd_history: Vec<String>,
+    ussd_bookmarks: Vec<UssdBookmarkGroup>,
+    ussd_bookmarks_file: PathBuf,
 
     // Tab selection
     current_tab: usize,
@@ -382,6 +404,7 @@ struct ModAtApp {
     contact_name_input: String,
     contact_number_input: String,
     warning_message: Option<String>,
+    settings_saved: Option<f32>,
 
     // Scheduled SMS
     scheduled_messages: Vec<scheduled::ScheduledSms>,
@@ -410,6 +433,7 @@ impl ModAtApp {
         let contacts_file = base_dir.join("contacts.json");
         let settings_file = base_dir.join("settings.ini");
         let inbox_file = base_dir.join("inbox.json");
+        let ussd_bookmarks_file = base_dir.join("ussd_bookmarks.json");
 
         let mut cfg = AppSettingsFile::default();
         let settings_existed = settings_file.exists();
@@ -419,6 +443,9 @@ impl ModAtApp {
                 cfg = parsed;
                 settings_loaded = true;
             }
+        }
+        if !matches!(cfg.sms.log_mode.as_str(), "at" | "system" | "important" | "all" | "raw") {
+            cfg.sms.log_mode = "important".to_string();
         }
 
         let (app_event_tx, app_event_rx) = mpsc::channel::<AppEvent>();
@@ -440,6 +467,13 @@ impl ModAtApp {
             expecting_cds_pdu: false,
             expecting_cmt_pdu: false,
             expecting_cmgr_pdu: false,
+            expecting_cmgl_pdu: false,
+            pending_cmgr_index: None,
+            pending_cmgl_index: None,
+            pending_cmgl_status: String::new(),
+            cmgr_read_queue: VecDeque::new(),
+            waiting_cpms_for_sms: false,
+            last_inbox_poll: Instant::now(),
             connected_port: None,
             serial_tx: None,
             response_rx: None,
@@ -474,6 +508,7 @@ impl ModAtApp {
             ],
             delivery_report: cfg.sms.delivery_report.parse().unwrap_or(true),
             log_mode: cfg.sms.log_mode.clone(),
+            hide_status_logs: true,
             char_count: "0 / 160".to_string(),
             signal: "---".to_string(),
             operator: "---".to_string(),
@@ -526,6 +561,8 @@ impl ModAtApp {
             ussd_plain_text: false,
             ussd_console: String::new(),
             ussd_history: Vec::new(),
+            ussd_bookmarks: Vec::new(),
+            ussd_bookmarks_file,
             current_tab: 0,
             tab_names: vec![
                 "SMS".to_string(),
@@ -556,6 +593,7 @@ impl ModAtApp {
             contact_name_input: String::new(),
             contact_number_input: String::new(),
             warning_message: None,
+            settings_saved: None,
             scheduled_messages: Vec::new(),
             scheduled_file: base_dir.join("scheduled.json"),
             show_add_schedule: false,
@@ -601,6 +639,7 @@ impl ModAtApp {
         app.update_char_count();
         app.refresh_com_ports(true);
         app.load_scheduled();
+        app.load_ussd_bookmarks();
         app.detect_modem_mode_async();
 
         // Hardware watcher thread
@@ -626,6 +665,17 @@ impl eframe::App for ModAtApp {
         self.check_scheduled_sms();
         self.process_app_events();
         self.process_ui_serial();
+        if self.connected && self.last_inbox_poll.elapsed() >= Duration::from_secs(5) {
+            self.last_inbox_poll = Instant::now();
+            self.poll_unread_sms();
+        }
+
+        if let Some(ref mut t) = self.settings_saved {
+            *t -= ctx.input(|i| i.stable_dt);
+            if *t <= 0.0 {
+                self.settings_saved = None;
+            }
+        }
 
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {

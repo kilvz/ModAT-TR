@@ -112,8 +112,13 @@ impl crate::ModAtApp {
             ui.label(format!("Detected Serial Profile: {}", self.serial_profile_label()));
         });
 
-        if ui.button("Save Settings").clicked() {
-            self.save_settings();
-        }
+        ui.horizontal(|ui| {
+            if ui.button("Save Settings").clicked() {
+                self.save_settings();
+            }
+            if self.settings_saved.is_some() {
+                ui.colored_label(Color32::GREEN, "Settings saved!");
+            }
+        });
     }
 }

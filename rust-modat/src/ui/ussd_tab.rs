@@ -1,38 +1,5 @@
 use egui::{self, Color32, RichText, Stroke, TextEdit};
 
-fn ussd_bookmarks() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
-    vec![
-        ("Telkomsel", vec![
-            ("Cek Pulsa", "*888#"),
-            ("Menu Utama", "*123#"),
-            ("Paket Internet", "*363#"),
-            ("Transfer Pulsa", "*858#"),
-            ("Cek Kuota", "*889#"),
-        ]),
-        ("Indosat (IM3)", vec![
-            ("Menu myIM3", "*123#"),
-            ("Cek Pulsa", "*111#"),
-            ("Beli Paket", "*123*1#"),
-            ("Cek Kuota", "*123*3#"),
-        ]),
-        ("XL Axiata", vec![
-            ("Menu / Cek Pulsa", "*123#"),
-            ("Beli Paket", "*123*1#"),
-            ("Cek Kuota", "*123*3#"),
-        ]),
-        ("Tri (3)", vec![
-            ("Menu", "*111#"),
-            ("Cek Kuota", "*111*1#"),
-            ("Cek Pulsa", "*111*2#"),
-        ]),
-        ("Smartfren", vec![
-            ("Menu", "*123#"),
-            ("Cek Kuota", "*995#"),
-            ("Cek Pulsa", "*999#"),
-        ]),
-    ]
-}
-
 impl crate::ModAtApp {
     pub(crate) fn render_ussd_tab(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
@@ -68,19 +35,27 @@ impl crate::ModAtApp {
                     }
                 });
 
-                ui.collapsing(RichText::new("Bookmarks").color(Color32::from_rgb(189, 147, 249)), |ui| {
-                    for (op_name, codes) in ussd_bookmarks() {
-                        ui.label(RichText::new(op_name).strong());
-                        ui.horizontal_wrapped(|ui| {
-                            for (name, code) in &codes {
-                                if ui.button(format!("{} ({})", name, code)).clicked() {
-                                    self.ussd_input = code.to_string();
-                                }
-                            }
-                        });
-                        ui.add_space(4.0);
+        ui.collapsing(RichText::new("Bookmarks").color(Color32::from_rgb(189, 147, 249)), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Edit").small().color(Color32::from_rgb(98, 114, 164)));
+                ui.label(RichText::new("ussd_bookmarks.json").small().color(Color32::from_rgb(139, 233, 253)));
+                if ui.small_button("Reload").clicked() {
+                    self.reload_ussd_bookmarks();
+                }
+            });
+            ui.add_space(4.0);
+            for group in self.ussd_bookmarks.clone() {
+                ui.label(RichText::new(&group.operator).strong());
+                ui.horizontal_wrapped(|ui| {
+                    for entry in &group.bookmarks {
+                        if ui.button(format!("{} ({})", entry.name, entry.code)).clicked() {
+                            self.send_ussd(&entry.code);
+                        }
                     }
                 });
+                ui.add_space(4.0);
+            }
+        });
 
                 ui.horizontal(|ui| {
                     ui.label("DCS:");
@@ -112,18 +87,11 @@ impl crate::ModAtApp {
                     ui.separator();
                     ui.label(RichText::new("Reply:").strong().color(Color32::from_rgb(80, 250, 123)));
                     ui.horizontal_wrapped(|ui| {
-                        let buttons: Vec<String> = self.ussd_buttons.clone();
-                        for (idx, _) in buttons.iter().enumerate() {
-                            if ui.button(format!("{}", idx + 1)).clicked() {
+                        let buttons = self.ussd_buttons.clone();
+                        for (idx, text) in buttons.iter().enumerate() {
+                            if ui.button(text.as_str()).clicked() {
                                 self.reply_ussd(idx + 1);
                             }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.horizontal_wrapped(|ui| {
-                        let buttons: Vec<String> = self.ussd_buttons.clone();
-                        for button_text in buttons.iter() {
-                            ui.label(RichText::new(button_text).color(Color32::from_rgb(189, 147, 249)));
                         }
                     });
                 }
@@ -136,7 +104,7 @@ impl crate::ModAtApp {
                         ui.checkbox(&mut self.ussd_view_raw, "RAW");
                     });
                 });
-                egui::ScrollArea::vertical().max_height(100.0).auto_shrink([false, false]).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height((ui.available_height() - 60.0).max(80.0)).auto_shrink([false, false]).show(ui, |ui| {
                     let display = if self.ussd_view_raw { &self.ussd_raw_response } else { &self.ussd_response };
                     if display.is_empty() {
                         ui.colored_label(Color32::from_rgb(98, 114, 164), "Response will appear here...");
