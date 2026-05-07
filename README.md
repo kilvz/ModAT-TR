@@ -1,4 +1,4 @@
-# ModAT-TR v 0.2.0.0
+# ModAT-TR v0.2.0
 
 A high-performance modem dashboard built with **Rust** + **egui** for SMS management, real-time network diagnostics, USSD queries, scheduled messaging, and AT terminal control.
 
@@ -9,16 +9,27 @@ A high-performance modem dashboard built with **Rust** + **egui** for SMS manage
 ### SMS Management
 - Send SMS in PDU mode with configurable Class (0-Flash/1-Normal/2-SIM/3-Phone) and DCS
 - Inbox with read, reply, forward, delete — auto-decodes PDU, saves locally
+- Inbox auto-sync: polls unread SMS with `AT+CMGL=0` every 5 seconds while connected
+- Manual "Load Inbox" button syncs all modem-stored SMS via `AT+CMGL=4`
+- Duplicate PDU detection to prevent repeated notifications from spamming inbox
 - Delivery reports with status tracking and raw PDU detail view
+- "Clear Delivery Reports (Modem)" scans modem storage and deletes only status-report PDUs (leaves inbox SMS alone)
 - Invisible ping support
 - Contact name resolution in logs and delivery reports
+
+### Huawei Modem Compatibility
+- Modem init: `AT^CURC=0`, `AT+CPMS="ME","ME","ME"`, `AT+CNMI=2,0,0,2,1`
+- PDU mode SMS reading with Huawei-style `CMGL` response parsing
+- Loose `+CMGL:` regex to handle variable-format responses
 
 ### USSD Tab
 - Send USSD codes with configurable DCS (GSM 7-bit, UCS2, packed 7-bit, etc.)
 - GSM 03.38 encoding + 7-bit packing for proper Huawei modem compatibility
-- Interactive reply buttons parsed from USSD responses
+- Click a bookmark or reply text label to directly send the USSD code or reply
+- Reply button extraction only matches menu items at the start of lines or after whitespace
 - Activity indicator (Active/Idle), RAW/readable toggle, console log
-- **Bookmarks**: pre-loaded Indonesian operator codes (Telkomsel, Indosat, XL, Tri, Smartfren)
+- **Bookmarks**: user-editable `ussd_bookmarks.json` with Reload button — no restart needed
+- Pre-loaded default bookmarks for Indonesian operators (Telkomsel, Indosat, XL, Tri, Smartfren)
 - **History**: remembers last 5 unique USSD codes sent
 
 ### Scheduled SMS
@@ -27,7 +38,6 @@ A high-performance modem dashboard built with **Rust** + **egui** for SMS manage
 - Flash SMS (Class 0) support
 - Tag-based recipient input with phonebook picker
 - Background timer with auto-reschedule for repeating entries
-- Only current/future entries displayed
 
 ### AT Terminal
 - Tab autocomplete from ~150 commands across 4 categories (Universal, Huawei, Qualcomm, MediaTek)
@@ -36,8 +46,8 @@ A high-performance modem dashboard built with **Rust** + **egui** for SMS manage
 - Response output with scroll
 
 ### Terminal Log
-- Three filter views: **AT** (decoded serial), **System** (app events + SMS), **Important** (errors + SMS only)
-- ALL and RAW views for full detail
+- Five filter views: **AT** (decoded serial), **System** (app events + SMS), **Important** (errors + SMS only), **All**, **RAW**
+- "Hide status" checkbox filters out repeated network polling noise (Signal, Network, +CSQ, +COPS, +CREG, +CGREG, ^SYSINFOEX, ^RSSI, ^HCSQ, ^HFREQINFO, ^DSFLOWRPT, OK, and their escaped raw chunks)
 - Pause/Resume button to freeze log for analysis
 - Raw serial lines auto-translated to readable format
 - VecDeque-backed buffers for O(1) trimming (24/7 safe)
@@ -49,7 +59,7 @@ A high-performance modem dashboard built with **Rust** + **egui** for SMS manage
 - Signal quality guide
 
 ### Phonebook
-- Local contacts.json persistence
+- Local `contacts.json` persistence
 - Add/delete contacts, use in recipients
 
 ### Settings
@@ -57,8 +67,9 @@ A high-performance modem dashboard built with **Rust** + **egui** for SMS manage
 - Baud rate (9600-115200)
 - Bypass auto-detect for direct connection
 - Switch mode (Debug/Project)
-- SMS DCS and class configuration
-- DPAPI-encrypted password storage
+- SMS DCS, class, delivery report, and log mode configuration
+- Settings save shows inline green confirmation label
+- DPAPI-encrypted password storage (Windows)
 
 ### Modem Control
 - Connect Serial / Connect Directly
@@ -85,7 +96,7 @@ cargo run
 cd rust-modat
 cargo build --release
 ```
-Output: `target/release/modat-t.exe`
+Output: `target/release/modat-t.exe` (~6 MB, optimized with `opt-level="z"`, LTO, stripped)
 
 ---
 
@@ -95,9 +106,9 @@ Output: `target/release/modat-t.exe`
 rust-modat/
 ├── src/
 │   ├── main.rs          # App entry, structs, config, update loop
-│   ├── modem.rs         # Serial, connection, detection, events
-│   ├── sms.rs           # PDU encode/decode, SMS send, inbox, delivery
-│   ├── storage.rs       # Persistence, logging, contacts
+│   ├── modem.rs         # Serial, connection, detection, CNMI, events
+│   ├── sms.rs           # PDU encode/decode, SMS send, inbox, delivery, polling
+│   ├── storage.rs       # Persistence, logging, contacts, settings
 │   ├── ussd.rs          # USSD send/reply/cancel/parse + GSM encoding
 │   ├── scheduled.rs     # Scheduled SMS struct + timer + load/save
 │   ├── patterns.rs      # Cached regex definitions
@@ -115,7 +126,7 @@ rust-modat/
 │       ├── ussd_tab.rs
 │       └── scheduled_tab.rs
 ├── Cargo.toml
-└── OPTIMIZATION_CHANGELOG.md
+└── LICENSE
 ```
 
 ---
@@ -125,8 +136,12 @@ rust-modat/
 - `contacts.json` — phonebook entries
 - `inbox.json` — saved SMS messages
 - `scheduled.json` — scheduled SMS entries
+- `ussd_bookmarks.json` — user-editable USSD bookmark groups
 
 ---
+
+## License
+MIT — see `LICENSE` file.
 
 ## Disclaimer
 This software interacts directly with modem firmware. Modifying advanced parameters via AT commands may cause unexpected behavior. Use at your own risk.
