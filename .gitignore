@@ -1,0 +1,27 @@
+# Rust
+target/
+target_build/
+**/*.rs.bk
+
+# Application Data (local)
+rust-modat/settings.ini
+rust-modat/contacts.json
+rust-modat/inbox.json
+rust-modat/scheduled.json
+rust-modat/*.log
+
+# Windows
+*.exe
+*.dll
+*.pdb
+Thumbs.db
+Desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Misc
+.DS_Store

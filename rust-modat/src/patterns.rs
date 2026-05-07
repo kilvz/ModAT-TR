@@ -1,0 +1,24 @@
+use regex::Regex;
+use std::sync::LazyLock;
+
+pub(crate) static RE_CMS_ERROR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\+CMS ERROR:\s*(\d+)").unwrap());
+pub(crate) static RE_CSQ: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\+CSQ:\s*(\d+)").unwrap());
+pub(crate) static RE_COPS_QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\+COPS:\s*\d+,\s*\d+,\s*"([^"]*)""#).unwrap());
+pub(crate) static RE_COPS_UNQUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\+COPS:\s*\d+,\s*\d+,\s*([^,\s]+)").unwrap());
+pub(crate) static RE_SYSINFOEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\^SYSINFOEX:.*?"([^"]+)""#).unwrap());
+pub(crate) static RE_HCSQ: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\^HCSQ:\s*"([^"]+)",(\d+),(\d+),(\d+),(\d+)"#).unwrap());
+pub(crate) static RE_HFREQINFO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\^HFREQINFO:\s*\d+,\d+,(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)").unwrap());
+pub(crate) static RE_CREG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\+C[G]?REG:\s*\d+,\s*(\d+)(?:,\s*"([^"]+)",\s*"([^"]+)")?"#).unwrap());
+pub(crate) static RE_SIMPLE_CREG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\+C[G]?REG:\s*(\d+)(?:,"([^"]+)","([^"]+)")?"#).unwrap());
+pub(crate) static RE_HEX_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^[0-9A-Fa-f]+$").unwrap());
+pub(crate) static RE_CMGL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\+CMGL:\s*(\d+),(\d+),(\d+)\s*\r?\n([0-9A-Fa-f]+)").unwrap());
+pub(crate) static RE_CMGS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\+CMGS:\s*(\d+)").unwrap());
+pub(crate) static RE_COM_PORT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)COM\d+").unwrap());
+pub(crate) static RE_FRIENDLY_COM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((COM\d+)\)").unwrap());
+pub(crate) static RE_SIGNAL_BARS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((\d+)\)").unwrap());
+pub(crate) static RE_HCSQ_ALT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\^HCSQ:"([^"]+)",(\d+),(\d+),(\d+),(\d+)"#).unwrap());
+pub(crate) static RE_RSSI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\^RSSI:(\d+)").unwrap());
+pub(crate) static RE_CSRF_TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"name="csrf_token"\s+content="(\S+)""#).unwrap());
+pub(crate) static RE_CDS_PDU: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\+CDS:\s*\d+\s*,?\s*([0-9A-Fa-f]{20,})").unwrap());
+pub(crate) static RE_CDSI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\+CDSI:\s*"(\w+)",(\d+)"#).unwrap());
+pub(crate) static RE_CMTI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\+CMTI:\s*"(\w+)",(\d+)"#).unwrap());

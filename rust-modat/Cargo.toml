@@ -1,0 +1,27 @@
+[package]
+name = "modat-t"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow"] }
+egui = { version = "0.31", features = ["default_fonts"] }
+egui_extras = { version = "0.31", features = ["image"] }
+image = { version = "0.25", features = ["png"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "blocking"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_ini = "0.2"
+regex = "1"
+chrono = "0.4"
+serialport = "4.5"
+base64 = "0.22"
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory"] }
+
+[build-dependencies]
+embed-resource = "2.5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
