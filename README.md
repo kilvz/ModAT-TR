@@ -17,11 +17,6 @@ A high-performance modem dashboard built with **Rust** + **egui** for SMS manage
 - Invisible ping support
 - Contact name resolution in logs and delivery reports
 
-### Huawei Modem Compatibility
-- Modem init: `AT^CURC=0`, `AT+CPMS="ME","ME","ME"`, `AT+CNMI=2,0,0,2,1`
-- PDU mode SMS reading with Huawei-style `CMGL` response parsing
-- Loose `+CMGL:` regex to handle variable-format responses
-
 ### USSD Tab
 - Send USSD codes with configurable DCS (GSM 7-bit, UCS2, packed 7-bit, etc.)
 - GSM 03.38 encoding + 7-bit packing for proper Huawei modem compatibility
