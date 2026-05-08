@@ -1,4 +1,4 @@
-# ModAT-TR v 0.2.0.0
+# ModAT-TR v 0.2.0
 
 A high-performance modem dashboard built with **Rust** + **egui** for SMS management, real-time network diagnostics, USSD queries, scheduled messaging, and AT terminal control.
 
