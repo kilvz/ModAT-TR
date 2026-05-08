@@ -1,5 +1,5 @@
 use crate::patterns::*;
-use crate::{DeliveryRecord, InboxMessage, PendingSend, SentMessageInfo};
+use crate::{ConcatParts, DeliveryRecord, InboxMessage, PendingSend, SentMessageInfo};
 use chrono::Local;
 use std::thread;
 use std::time::Duration;
@@ -159,7 +159,10 @@ impl crate::ModAtApp {
         encoded
     }
 
-    fn decode_phone_number(&self, data: &[u8], addr_type: u8) -> String {
+    fn decode_phone_number(&self, data: &[u8], addr_type: u8, addr_len: usize) -> String {
+        if (addr_type & 0x70) == 0x50 {
+            return self.decode_7bit(data, addr_len);
+        }
         let mut digits = Vec::new();
         for &byte in data {
             let d1 = byte & 0x0F;
@@ -276,13 +279,13 @@ impl crate::ModAtApp {
         let addr_type = pdu_bytes[offset];
         offset += 1;
 
-        let addr_digits = addr_len.div_ceil(2);
-        let phone = if offset + addr_digits <= pdu_bytes.len() {
-            self.decode_phone_number(&pdu_bytes[offset..offset + addr_digits], addr_type)
+        let addr_bytes = addr_len.div_ceil(2);
+        let phone = if offset + addr_bytes <= pdu_bytes.len() {
+            self.decode_phone_number(&pdu_bytes[offset..offset + addr_bytes], addr_type, addr_bytes)
         } else {
             String::new()
         };
-        offset += addr_digits;
+        offset += addr_bytes;
 
         if offset + 1 >= pdu_bytes.len() {
             return (phone, String::new(), String::new(), 0);
@@ -732,7 +735,7 @@ impl crate::ModAtApp {
 
         let addr_digits = (addr_len as usize).div_ceil(2);
         let phone = if offset + addr_digits <= pdu_bytes.len() {
-            self.decode_phone_number(&pdu_bytes[offset..offset + addr_digits], addr_type)
+            self.decode_phone_number(&pdu_bytes[offset..offset + addr_digits], addr_type, addr_len as usize)
         } else {
             "Unknown".to_string()
         };
@@ -876,6 +879,50 @@ impl crate::ModAtApp {
         self.handle_direct_sms_with_index(pdu_hex, 0);
     }
 
+    fn parse_concat_from_pdu(&self, pdu_hex: &str) -> Option<(u16, u8, u8, usize)> {
+        let pdu_bytes = decode_hex(pdu_hex);
+        if pdu_bytes.is_empty() { return None; }
+        let mut off = 0;
+        if pdu_bytes[0] > 0 && pdu_bytes[0] < 20 && (1 + pdu_bytes[0] as usize) < pdu_bytes.len() {
+            off += 1 + pdu_bytes[0] as usize;
+        }
+        let pdu_type = *pdu_bytes.get(off)?;
+        if pdu_type & 0x40 == 0 { return None; }
+        off += 1;
+        let mti = pdu_type & 0x03;
+        if mti == 0x01 { off += 1; }
+        let addr_len = *pdu_bytes.get(off)? as usize;
+        off += 2; // skip addr_len + addr_type
+        off += addr_len.div_ceil(2);
+        off += 1; // skip PID
+        off += 1; // skip DCS
+        if mti == 0x00 { off += 7; } // skip timestamp
+        let _udl = *pdu_bytes.get(off)? as usize;
+        off += 1;
+        let udhl = *pdu_bytes.get(off)? as usize;
+        off += 1;
+        let udh_bytes = 1 + udhl;
+        if pdu_bytes[off] == 0x00
+            && pdu_bytes[off + 1] == 0x03
+            && udhl >= 5 && off + 5 <= pdu_bytes.len()
+        {
+            let ref_num = pdu_bytes[off + 2] as u16;
+            let total = pdu_bytes[off + 3];
+            let part = pdu_bytes[off + 4];
+            Some((ref_num, part, total, udh_bytes))
+        } else if pdu_bytes[off] == 0x08
+            && pdu_bytes[off + 1] == 0x04
+            && udhl >= 6 && off + 6 <= pdu_bytes.len()
+        {
+            let ref_num = u16::from_be_bytes([pdu_bytes[off + 2], pdu_bytes[off + 3]]);
+            let total = pdu_bytes[off + 4];
+            let part = pdu_bytes[off + 5];
+            Some((ref_num, part, total, udh_bytes))
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn handle_direct_sms_with_index(&mut self, pdu_hex: &str, index: usize) {
         self.handle_direct_sms_with_status(pdu_hex, index, "REC UNREAD".to_string(), true);
     }
@@ -917,26 +964,69 @@ impl crate::ModAtApp {
             }
             let (phone, timestamp, message, _dcs) = self.decode_sms_simple(pdu_hex);
             self.log(&format!("Decoded SMS from {}: {}", phone, message), "sms");
-            self.inbox_messages.push(InboxMessage {
-                index,
-                status,
-                pdu: pdu_hex.to_string(),
-                phone: phone.clone(),
-                timestamp,
-                unread,
-            });
-            self.save_inbox_file();
-            self.log(
-                &format!(
-                    "New SMS from {}",
-                    if phone.is_empty() {
-                        "Unknown".to_string()
-                    } else {
-                        phone
-                    }
-                ),
-                "sms",
-            );
+
+            if let Some((ref_num, part, total, udh_bytes)) = self.parse_concat_from_pdu(pdu_hex) {
+                let udh_chars = (udh_bytes * 8).div_ceil(7);
+                let stripped: String = message.chars().skip(udh_chars).collect();
+                let key = (phone.clone(), ref_num);
+                let entry = self.concat_pending.entry(key.clone()).or_insert_with(|| ConcatParts {
+                    total,
+                    parts: vec![None; total as usize],
+                    phone: phone.clone(),
+                    timestamp: timestamp.clone(),
+                    index,
+                    status: status.clone(),
+                    unread,
+                    pdu: pdu_hex.to_string(),
+                });
+                if (part as usize) <= entry.parts.len() && part > 0 {
+                    entry.parts[part as usize - 1] = Some(stripped);
+                }
+                if entry.parts.iter().all(|p| p.is_some()) {
+                    let assembled: String = entry.parts.iter()
+                        .filter_map(|p| p.as_deref())
+                        .collect::<Vec<&str>>()
+                        .join("");
+                    let msg = InboxMessage {
+                        index: entry.index,
+                        status: entry.status.clone(),
+                        pdu: entry.pdu.clone(),
+                        phone: entry.phone.clone(),
+                        timestamp: entry.timestamp.clone(),
+                        unread: entry.unread,
+                        pre_decoded: Some(assembled),
+                    };
+                    let entry_phone = entry.phone.clone();
+                    self.inbox_messages.push(msg);
+                    self.save_inbox_file();
+                    self.log(&format!("Assembled {}-part SMS from {}", total, entry_phone), "sms");
+                    self.concat_pending.remove(&key);
+                } else {
+                    self.log(&format!("Concat SMS part {}/{} from {} buffered", part, total, phone), "sms");
+                }
+            } else {
+                self.inbox_messages.push(InboxMessage {
+                    index,
+                    status,
+                    pdu: pdu_hex.to_string(),
+                    phone: phone.clone(),
+                    timestamp,
+                    unread,
+                    pre_decoded: None,
+                });
+                self.save_inbox_file();
+                self.log(
+                    &format!(
+                        "New SMS from {}",
+                        if phone.is_empty() {
+                            "Unknown".to_string()
+                        } else {
+                            phone
+                        }
+                    ),
+                    "sms",
+                );
+            }
         }
     }
 

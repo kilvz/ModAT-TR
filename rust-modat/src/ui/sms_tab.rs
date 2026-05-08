@@ -161,11 +161,15 @@ impl crate::ModAtApp {
                     );
                     ui.separator();
                     ui.label("View:");
+                    let prev_mode = self.log_mode.clone();
                     ui.radio_value(&mut self.log_mode, "at".to_string(), "AT");
                     ui.radio_value(&mut self.log_mode, "system".to_string(), "System");
                     ui.radio_value(&mut self.log_mode, "important".to_string(), "Important");
                     ui.radio_value(&mut self.log_mode, "all".to_string(), "All");
                     ui.radio_value(&mut self.log_mode, "raw".to_string(), "RAW");
+                    if self.log_mode != prev_mode {
+                        self.log_cache_dirty = true;
+                    }
                     let pause_label = if self.log_paused { "▶ Resume" } else { "⏸ Pause" };
                     if ui.button(pause_label).clicked() {
                         self.log_paused = !self.log_paused;
@@ -177,46 +181,45 @@ impl crate::ModAtApp {
                         self.log_cache_dirty = true;
                     }
                 });
-                let log_height = ui.available_height().max(220.0);
+                let _log_height = ui.available_height().max(220.0);
                 if self.log_paused {
                     ui.colored_label(Color32::from_rgb(255, 165, 0), "⏸ LOG PAUSED — entries are not being recorded");
                 }
                 self.rebuild_log_cache();
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), log_height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        egui::ScrollArea::vertical()
-                            .stick_to_bottom(true)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.set_min_height(log_height);
-                                for entry in self.filtered_log_entries() {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(
-                                            RichText::new(format!("[{}]", entry.timestamp))
-                                                .monospace()
-                                                .color(Color32::from_rgb(98, 114, 164)),
-                                        );
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{:<3}",
-                                                category_label(&entry.category)
-                                            ))
-                                            .monospace()
-                                            .strong()
-                                            .color(log_color(&entry.category)),
-                                        );
-                                        ui.label(
-                                            RichText::new(&entry.message)
-                                                .monospace()
-                                                .color(log_color(&entry.category)),
-                                        );
-                                    });
-                                }
-                            });
-                    },
-                );
+                let entries = self.filtered_log_entries().len();
+                ui.horizontal(|ui| {
+                    ui.label(format!("{} entries", entries));
+                    if ui.small_button("⬇ latest").clicked() {
+                        self.log_scrolled_to_bottom = true;
+                    }
+                });
+                let row_height = 18.0;
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(self.log_scrolled_to_bottom)
+                    .auto_shrink([false, false])
+                    .show_rows(ui, row_height, entries.max(1), |ui, range| {
+                        let range_end = range.end;
+                        for i in range {
+                            if let Some(entry) = self.filtered_log_entries().get(i) {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "[{}] {} {}",
+                                            entry.timestamp,
+                                            category_label(&entry.category),
+                                            entry.message
+                                        ))
+                                        .monospace()
+                                        .color(log_color(&entry.category)),
+                                    );
+                                });
+                            }
+                        }
+                        if self.log_scrolled_to_bottom && range_end >= entries.saturating_sub(1) {
+                        } else {
+                            self.log_scrolled_to_bottom = false;
+                        }
+                    });
             });
     }
 }

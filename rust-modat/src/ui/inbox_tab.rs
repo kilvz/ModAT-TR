@@ -55,9 +55,32 @@ impl crate::ModAtApp {
 
         let mut mark_read_idx = None;
         if let Some(ref msg) = self.current_inbox_msg {
-            let (phone, timestamp, message, dcs) = self.decode_sms_simple(&msg.pdu);
             let msg_index = msg.index;
             let msg_unread = msg.unread;
+            let phone = if msg.phone.is_empty() {
+                let (p, ..) = self.decode_sms_simple(&msg.pdu);
+                p
+            } else {
+                msg.phone.clone()
+            };
+            let timestamp = if msg.timestamp.is_empty() {
+                let (_, t, ..) = self.decode_sms_simple(&msg.pdu);
+                t
+            } else {
+                msg.timestamp.clone()
+            };
+            let message = if let Some(ref pre) = msg.pre_decoded {
+                pre.clone()
+            } else {
+                let (_, _, m, _) = self.decode_sms_simple(&msg.pdu);
+                m
+            };
+            let dcs = if msg.pre_decoded.is_some() {
+                0
+            } else {
+                let (_, _, _, d) = self.decode_sms_simple(&msg.pdu);
+                d
+            };
 
             ui.group(|ui| {
                 match self.inbox_view_mode.as_str() {

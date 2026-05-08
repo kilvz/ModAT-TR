@@ -13,6 +13,32 @@ pub(crate) fn atomic_write(path: &PathBuf, content: &str) -> io::Result<()> {
 }
 
 impl crate::ModAtApp {
+    fn is_spam_log_entry(msg: &str) -> bool {
+        msg.starts_with("Network:")
+            || msg.starts_with("Signal [")
+            || msg.starts_with("Frequency info updated")
+            || msg == "OK"
+            || msg.starts_with("+CSQ:")
+            || msg.starts_with("+COPS:")
+            || msg.starts_with("+CREG:")
+            || msg.starts_with("+CGREG:")
+            || msg.starts_with("^SYSINFOEX:")
+            || msg.starts_with("^RSSI:")
+            || msg.starts_with("^HCSQ:")
+            || msg.starts_with("^HFREQINFO:")
+            || msg.starts_with("^DSFLOWRPT:")
+            || msg.contains("\\r\\nOK\\r\\n")
+            || msg.contains("\\r\\n+CSQ:")
+            || msg.contains("\\r\\n+COPS:")
+            || msg.contains("\\r\\n+CREG:")
+            || msg.contains("\\r\\n+CGREG:")
+            || msg.contains("\\r\\n^SYSINFOEX:")
+            || msg.contains("\\r\\n^RSSI:")
+            || msg.contains("\\r\\n^HCSQ:")
+            || msg.contains("\\r\\n^HFREQINFO:")
+            || msg.contains("\\r\\n^DSFLOWRPT:")
+    }
+
     // ─── Logging ───
     pub(crate) fn log(&mut self, msg: &str, category: &str) {
         if self.log_paused {
@@ -25,12 +51,29 @@ impl crate::ModAtApp {
             category: category.to_string(),
             message: msg.to_string(),
         };
+        let entry_bytes = entry.timestamp.len() + entry.category.len() + entry.message.len();
 
         if category == "raw" {
-            if self.raw_log_entries.len() >= self.max_raw_log_entries {
-                self.raw_log_entries.pop_front();
+            while self.raw_log_entries.len() >= self.max_raw_log_entries
+                || self.log_usage_bytes + entry_bytes > self.max_log_bytes
+            {
+                let spam_idx = self.raw_log_entries.iter()
+                    .position(|e| Self::is_spam_log_entry(&e.message));
+                let removed = if let Some(idx) = spam_idx {
+                    self.raw_log_entries.remove(idx)
+                } else if let Some(old) = self.raw_log_entries.pop_front() {
+                    Some(old)
+                } else {
+                    break;
+                };
+                if let Some(old) = removed {
+                    self.log_usage_bytes = self.log_usage_bytes.saturating_sub(
+                        old.timestamp.len() + old.category.len() + old.message.len(),
+                    );
+                }
             }
             self.raw_log_entries.push_back(entry);
+            self.log_usage_bytes += entry_bytes;
 
             if let Some(readable) = self.readable_raw(msg) {
                 let r_entry = LogEntry {
@@ -38,22 +81,57 @@ impl crate::ModAtApp {
                     category: "at".to_string(),
                     message: readable,
                 };
-                if self.important_log_entries.len() >= self.max_important_log_entries {
-                    self.important_log_entries.pop_front();
+                let r_bytes = r_entry.timestamp.len() + r_entry.category.len() + r_entry.message.len();
+                while self.persistent_log_entries.len() >= self.max_persistent_log_entries
+                    || self.log_usage_bytes + r_bytes > self.max_log_bytes
+                {
+                    if let Some(old) = self.persistent_log_entries.pop_front() {
+                        self.log_usage_bytes = self.log_usage_bytes.saturating_sub(
+                            old.timestamp.len() + old.category.len() + old.message.len(),
+                        );
+                    } else {
+                        break;
+                    }
                 }
-                self.important_log_entries.push_back(r_entry);
+                self.persistent_log_entries.push_back(r_entry);
+                self.log_usage_bytes += r_bytes;
             }
+        } else if category == "sms" || category == "error" {
+            while self.persistent_log_entries.len() >= self.max_persistent_log_entries
+                || self.log_usage_bytes + entry_bytes > self.max_log_bytes
+            {
+                if let Some(old) = self.persistent_log_entries.pop_front() {
+                    self.log_usage_bytes = self.log_usage_bytes.saturating_sub(
+                        old.timestamp.len() + old.category.len() + old.message.len(),
+                    );
+                } else {
+                    break;
+                }
+            }
+            self.persistent_log_entries.push_back(entry);
+            self.log_usage_bytes += entry_bytes;
         } else {
-            if self.important_log_entries.len() >= self.max_important_log_entries {
-                self.important_log_entries.pop_front();
+            while self.info_log_entries.len() >= self.max_info_log_entries
+                || self.log_usage_bytes + entry_bytes > self.max_log_bytes
+            {
+                if let Some(old) = self.info_log_entries.pop_front() {
+                    self.log_usage_bytes = self.log_usage_bytes.saturating_sub(
+                        old.timestamp.len() + old.category.len() + old.message.len(),
+                    );
+                } else {
+                    break;
+                }
             }
-            self.important_log_entries.push_back(entry);
+            self.info_log_entries.push_back(entry);
+            self.log_usage_bytes += entry_bytes;
         }
     }
 
     pub(crate) fn clear_log(&mut self) {
         self.raw_log_entries.clear();
-        self.important_log_entries.clear();
+        self.persistent_log_entries.clear();
+        self.info_log_entries.clear();
+        self.log_usage_bytes = 0;
         self.log_cache_dirty = true;
     }
 
@@ -62,9 +140,14 @@ impl crate::ModAtApp {
             return;
         }
         let mode = self.log_mode.clone();
-        let mut filtered: Vec<LogEntry> = Vec::new();
-        for e in self.raw_log_entries.iter().chain(self.important_log_entries.iter()) {
-            if self.hide_status_logs
+        let est = self.raw_log_entries.len() + self.persistent_log_entries.len() + self.info_log_entries.len();
+        let mut filtered: Vec<LogEntry> = Vec::with_capacity(est);
+        let hide = self.hide_status_logs;
+        for e in self.raw_log_entries.iter()
+            .chain(self.info_log_entries.iter())
+            .chain(self.persistent_log_entries.iter())
+        {
+            if hide
                 && (e.message.starts_with("Network:")
                     || e.message.starts_with("Signal [")
                     || e.message.starts_with("Frequency info updated")
@@ -92,7 +175,7 @@ impl crate::ModAtApp {
                 continue;
             }
             let keep = match mode.as_str() {
-                "at" => e.category == "at",
+                "at" => e.category == "at" || e.category == "raw",
                 "raw" => e.category == "raw",
                 "system" => matches!(e.category.as_str(), "system" | "sms" | "error"),
                 "important" => matches!(e.category.as_str(), "sms" | "error"),

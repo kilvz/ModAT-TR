@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.2.1 — 2026-05-08
+
+### Added
+- **Concatenated SMS assembly** — multi-part SMS messages are automatically buffered and joined into one inbox entry
+- **Alphanumeric sender decoding** — sender names (e.g. "3Info") from providers using alphanumeric addressing are now decoded as 7-bit GSM text instead of garbled BCD digits
+- **AT command logging** — all AT commands sent (user or app-initiated) and their replies are logged in the AT terminal view; both readable and raw forms shown
+- **"Edit" button for USSD bookmarks** — opens `ussd_bookmarks.json` in Notepad
+- **Log memory cap** — total log RAM usage limited to 50MB; oldest entries trimmed when exceeded
+- **Persistent important log** — SMS and error log entries are stored in a dedicated high-capacity buffer (20,000 max) that won't be evicted by volume system/polling messages
+
+### Changed
+- **Terminal log default** — new installs default to "System" view; invalid legacy values normalized to "system"
+- **USSD bookmarks auto-close** — bookmarks panel collapses when a bookmark is clicked
+- **USSD menu extraction** — supports multi-digit menu items (10, 88, etc.) and requires whitespace after separator to avoid false matches on dates like "04-OCT"
+- **Terminal log layout** — fixed vertical centering; entries are now left-aligned with no text overflow
+- **Terminal log performance** — switched to virtual scrolling (`show_rows`); only visible rows rendered
+- **AT view** — now shows both readable decoded AT traffic AND raw serial data
+
+### Fixed
+- **USSD menu item extraction** — no longer misses options like "88. Kembali" and "0. Lanjut"
+- **USSD false matches** — "04-OCT-28" no longer detected as menu item
+- **Timezone display** — reverts to modem convention (Huawei uses opposite sign bit) for correct +7 display
+- **RNDIS status duplicate log** — "RNDIS status: Available" no longer logged twice when two threads report simultaneously
+- **Radio buttons when disconnected** — log view radio buttons now immediately refresh the display
+- **Stale UI after disconnect** — `signal`/`operator`/`network` labels now reliably reset to "---" when modem is removed
+- **Raw log eviction** — spam entries (signal polling, network, etc.) are evicted first when the raw buffer fills, protecting important raw entries (SMS PDUs, delivery reports)
+- **"Hide status" filter** — now consistently filters spam from all log views including RAW
+
+### Build
+- Binary size ~6 MB (`opt-level = "z"`, `panic = "abort"`, LTO, strip)
+
+---
+
 ## v0.2.0 — 2026-05-08
 
 ### Added

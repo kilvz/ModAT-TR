@@ -34,6 +34,8 @@ struct InboxMessage {
     phone: String,
     timestamp: String,
     unread: bool,
+    #[serde(default)]
+    pre_decoded: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +71,18 @@ struct PendingSend {
     length: usize,
     msg_type: String,
     content: String,
+}
+
+pub(crate) struct ConcatParts {
+    #[allow(dead_code)]
+    total: u8,
+    parts: Vec<Option<String>>,
+    phone: String,
+    timestamp: String,
+    index: usize,
+    status: String,
+    unread: bool,
+    pdu: String,
 }
 
 
@@ -177,7 +191,7 @@ impl Default for AppSettingsFile {
                 sms_class: "0 (Flash)".to_string(),
                 dcs: "0x50 (Class 0 - 7bit) [OK]".to_string(),
                 delivery_report: "true".to_string(),
-                log_mode: "important".to_string(),
+                log_mode: "system".to_string(),
             },
             network: NetworkConfig {
                 modem_ip: "192.168.8.1".to_string(),
@@ -374,6 +388,7 @@ struct ModAtApp {
     ussd_history: Vec<String>,
     ussd_bookmarks: Vec<UssdBookmarkGroup>,
     ussd_bookmarks_file: PathBuf,
+    ussd_bookmarks_open: bool,
 
     // Tab selection
     current_tab: usize,
@@ -381,13 +396,19 @@ struct ModAtApp {
 
     // Internal state
     sent_messages: HashMap<u32, SentMessageInfo>,
+    concat_pending: HashMap<(String, u16), ConcatParts>,
     raw_log_entries: VecDeque<LogEntry>,
-    important_log_entries: VecDeque<LogEntry>,
+    persistent_log_entries: VecDeque<LogEntry>,
+    info_log_entries: VecDeque<LogEntry>,
     max_raw_log_entries: usize,
-    max_important_log_entries: usize,
+    max_persistent_log_entries: usize,
+    max_info_log_entries: usize,
     log_paused: bool,
     log_cache_dirty: bool,
     cached_filtered_log: Vec<LogEntry>,
+    log_scrolled_to_bottom: bool,
+    log_usage_bytes: usize,
+    max_log_bytes: usize,
     incoming_buffer: String,
     serial_busy: Arc<Mutex<bool>>,
 
@@ -445,7 +466,7 @@ impl ModAtApp {
             }
         }
         if !matches!(cfg.sms.log_mode.as_str(), "at" | "system" | "important" | "all" | "raw") {
-            cfg.sms.log_mode = "important".to_string();
+            cfg.sms.log_mode = "system".to_string();
         }
 
         let (app_event_tx, app_event_rx) = mpsc::channel::<AppEvent>();
@@ -563,6 +584,7 @@ impl ModAtApp {
             ussd_history: Vec::new(),
             ussd_bookmarks: Vec::new(),
             ussd_bookmarks_file,
+            ussd_bookmarks_open: false,
             current_tab: 0,
             tab_names: vec![
                 "SMS".to_string(),
@@ -576,13 +598,19 @@ impl ModAtApp {
                 "Scheduled SMS".to_string(),
             ],
             sent_messages: HashMap::new(),
+            concat_pending: HashMap::new(),
             raw_log_entries: VecDeque::new(),
-            important_log_entries: VecDeque::new(),
+            persistent_log_entries: VecDeque::new(),
+            info_log_entries: VecDeque::new(),
             max_raw_log_entries: 100,
-            max_important_log_entries: 2000,
+            max_persistent_log_entries: 20_000,
+            max_info_log_entries: 2_000,
             log_paused: false,
             log_cache_dirty: true,
             cached_filtered_log: Vec::new(),
+            log_scrolled_to_bottom: true,
+            log_usage_bytes: 0,
+            max_log_bytes: 50_000_000,
             incoming_buffer: String::new(),
             serial_busy,
             contacts_file,

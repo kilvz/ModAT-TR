@@ -76,6 +76,7 @@ impl crate::ModAtApp {
     pub(crate) fn send_at(&mut self, cmd: &str, timeout_secs: u64) -> String {
         self.set_serial_busy(true);
         self.drain_response_rx();
+        self.log(&format!(">>> {}", cmd), "at");
         let result = if let Some(ref tx) = self.serial_tx {
             let _ = tx.send(format!("{}\r\n", cmd));
 
@@ -110,6 +111,7 @@ impl crate::ModAtApp {
     }
 
     pub(crate) fn send_at_multi(&mut self, cmd: &str, timeout_secs: u64) -> String {
+        self.log(&format!(">>> {}", cmd), "at");
         self.set_serial_busy(true);
         self.drain_response_rx();
         let result = if let Some(ref tx) = self.serial_tx {
@@ -473,6 +475,7 @@ impl crate::ModAtApp {
         self.serial_port = None;
         self.serial_tx = None;
         self.response_rx = None;
+        self.ui_rx = None;
         if let Some(handle) = self.reader_thread.take() {
             let _ = handle.join();
         }
@@ -501,12 +504,20 @@ impl crate::ModAtApp {
     pub(crate) fn get_modem_info_async(&self) {
         if !self.connected { return; }
         if let Some(ref tx) = self.serial_tx {
+            let log_tx = self.app_event_tx.clone();
+            let _ = log_tx.send(AppEvent::Log(">>> AT+CSQ".to_string(), "at".to_string()));
             let _ = tx.send("AT+CSQ\r\n".to_string());
+            let _ = log_tx.send(AppEvent::Log(">>> AT+COPS=3,0".to_string(), "at".to_string()));
             let _ = tx.send("AT+COPS=3,0\r\n".to_string());
+            let _ = log_tx.send(AppEvent::Log(">>> AT+COPS?".to_string(), "at".to_string()));
             let _ = tx.send("AT+COPS?\r\n".to_string());
+            let _ = log_tx.send(AppEvent::Log(">>> AT^SYSINFOEX".to_string(), "at".to_string()));
             let _ = tx.send("AT^SYSINFOEX\r\n".to_string());
+            let _ = log_tx.send(AppEvent::Log(">>> AT^HCSQ?".to_string(), "at".to_string()));
             let _ = tx.send("AT^HCSQ?\r\n".to_string());
+            let _ = log_tx.send(AppEvent::Log(">>> AT^HFREQINFO?".to_string(), "at".to_string()));
             let _ = tx.send("AT^HFREQINFO?\r\n".to_string());
+            let _ = log_tx.send(AppEvent::Log(">>> AT+CREG?".to_string(), "at".to_string()));
             let _ = tx.send("AT+CREG?\r\n".to_string());
         }
     }
@@ -1308,8 +1319,10 @@ impl crate::ModAtApp {
                     if status == "Available" {
                         self.refresh_com_ports(true);
                     }
-                    self.log(&format!("RNDIS status: {}", status), "system");
-                    self.rndis_status = status;
+                    if self.rndis_status != status {
+                        self.log(&format!("RNDIS status: {}", status), "system");
+                        self.rndis_status = status;
+                    }
                 }
 
                 AppEvent::ModemInfo(info) => {

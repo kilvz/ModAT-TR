@@ -35,9 +35,17 @@ impl crate::ModAtApp {
                     }
                 });
 
-        ui.collapsing(RichText::new("Bookmarks").color(Color32::from_rgb(189, 147, 249)), |ui| {
+        if ui.button(RichText::new(if self.ussd_bookmarks_open { "▼ Bookmarks" } else { "▶ Bookmarks" }).color(Color32::from_rgb(189, 147, 249))).clicked() {
+            self.ussd_bookmarks_open = !self.ussd_bookmarks_open;
+        }
+        if self.ussd_bookmarks_open {
+            ui.group(|ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Edit").small().color(Color32::from_rgb(98, 114, 164)));
+                if ui.small_button("Edit").clicked() {
+                    let _ = std::process::Command::new("notepad.exe")
+                        .arg(self.ussd_bookmarks_file.to_string_lossy().to_string())
+                        .spawn();
+                }
                 ui.label(RichText::new("ussd_bookmarks.json").small().color(Color32::from_rgb(139, 233, 253)));
                 if ui.small_button("Reload").clicked() {
                     self.reload_ussd_bookmarks();
@@ -50,12 +58,14 @@ impl crate::ModAtApp {
                     for entry in &group.bookmarks {
                         if ui.button(format!("{} ({})", entry.name, entry.code)).clicked() {
                             self.send_ussd(&entry.code);
+                            self.ussd_bookmarks_open = false;
                         }
                     }
                 });
                 ui.add_space(4.0);
             }
-        });
+            });
+        }
 
                 ui.horizontal(|ui| {
                     ui.label("DCS:");

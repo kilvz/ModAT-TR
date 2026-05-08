@@ -1,4 +1,27 @@
 
+/// Checks if position `i` is the start of a menu item: 1-3 ASCII digits
+/// at line-start or after whitespace, followed by '.', ')', '-', or ' ',
+/// with whitespace (or end) after the separator.
+fn is_menu_start(chars: &[char], i: usize) -> bool {
+    if i >= chars.len() || !chars[i].is_ascii_digit() {
+        return false;
+    }
+    if i > 0 && !chars[i - 1].is_whitespace() {
+        return false;
+    }
+    let mut j = i;
+    while j < i + 3 && j < chars.len() && chars[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j <= i || j >= chars.len() {
+        return false;
+    }
+    if chars[j] != '.' && chars[j] != ')' && chars[j] != '-' && chars[j] != ' ' {
+        return false;
+    }
+    j + 1 >= chars.len() || chars[j + 1].is_whitespace()
+}
+
 impl crate::ModAtApp {
     pub(crate) fn send_ussd(&mut self, code: &str) {
         if let Some(ref tx) = self.serial_tx {
@@ -228,25 +251,19 @@ impl crate::ModAtApp {
             let chars: Vec<char> = trimmed.chars().collect();
             let mut i = 0;
             while i < chars.len() {
-                let at_start = i == 0;
-                let after_ws = i > 0 && chars[i - 1].is_whitespace();
-                if chars[i].is_ascii_digit()
-                    && (at_start || after_ws)
-                    && i + 1 < chars.len()
-                    && (chars[i+1] == '.' || chars[i+1] == ')' || chars[i+1] == '-' || chars[i+1] == ' ')
-                {
+                if is_menu_start(&chars, i) {
                     let start = i;
-                    i += 1;
-                    while i < chars.len() && !(
-                        i + 1 < chars.len()
-                        && chars[i].is_ascii_digit()
-                        && (chars[i+1] == '.' || chars[i+1] == ')' || chars[i+1] == '-')
-                        && (i == 0 || chars[i - 1].is_whitespace())
-                    ) {
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                    if i < chars.len() {
+                        i += 1; // skip separator
+                    }
+                    while i < chars.len() && !is_menu_start(&chars, i) {
                         i += 1;
                     }
                     let text = trimmed[start..i].trim().to_string();
-                    if text.len() > 1 {
+                    if !text.is_empty() {
                         buttons.push(text);
                     }
                 } else {
